@@ -1,83 +1,82 @@
-import type { PlayerId, DuskClient } from "dusk-games-sdk/multiplayer"
+import type { DuskClient, PlayerId } from "dusk-games-sdk/multiplayer";
+import { physics } from "toglib/logic";
 
-export type Cells = (PlayerId | null)[]
+export type Coordinates = physics.Vector2;
+
 export interface GameState {
-  cells: Cells
-  winCombo: number[] | null
-  lastMovePlayerId: PlayerId | null
-  playerIds: PlayerId[]
-  freeCells?: boolean
+  world: physics.World;
+  ballIds: Record<string, PlayerId>;
+  playerBalls: Record<number, PlayerId>;
 }
 
 type GameActions = {
-  claimCell: (cellIndex: number) => void
-}
+  startDrag: () => void;
+  release: (force: physics.Vector2) => void;
+};
 
 declare global {
-  const Dusk: DuskClient<GameState, GameActions>
-}
-
-function findWinningCombo(cells: Cells) {
-  return (
-    [
-      [0, 1, 2],
-      [3, 4, 5],
-      [6, 7, 8],
-      [0, 3, 6],
-      [1, 4, 7],
-      [2, 5, 8],
-      [0, 4, 8],
-      [2, 4, 6],
-    ].find((combo) =>
-      combo.every((i) => cells[i] && cells[i] === cells[combo[0]])
-    ) || null
-  )
+  const Dusk: DuskClient<GameState, GameActions>;
 }
 
 Dusk.initLogic({
+  landscape: true,
   reactive: false,
+  inputDelay: 50,
   minPlayers: 2,
-  maxPlayers: 2,
-  setup: (allPlayerIds) => ({
-    cells: new Array(9).fill(null),
-    winCombo: null,
-    lastMovePlayerId: null,
-    playerIds: allPlayerIds,
-  }),
+  maxPlayers: 4,
+  setup: (allPlayerIds) => {
+    const ballIds = {};
+    const playerBalls = {};
+    const world = physics.createWorld(physics.newVec2(0, 0));
+
+    allPlayerIds.forEach((playerId, index) => {
+      const ball = physics.createCircle(
+        world,
+        { x: 30 * index, y: 50 },
+        30,
+        10000,
+        0.9,
+        0.5,
+      );
+
+      ballIds[ball.id] = playerId;
+      playerBalls[playerId] = ball.id;
+
+      physics.addBody(world, ball);
+    });
+
+    const walls = [
+      physics.createRectangle(world, { x: 0, y: 0 }, 300, 20, 0, 0, 0.8),
+      physics.createRectangle(world, { x: 0, y: 300 }, 300, 20, 0, 0, 0.8),
+      physics.createRectangle(world, { x: -150, y: 150 }, 20, 300, 0, 0, 0.8),
+      physics.createRectangle(world, { x: 150, y: 150 }, 20, 300, 0, 0, 0.8),
+    ];
+
+    walls.forEach((wall) => {
+      physics.addBody(world, wall);
+    });
+
+    return {
+      world,
+      ballIds,
+      playerBalls,
+    };
+  },
   actions: {
-    claimCell: (cellIndex, { game, playerId, allPlayerIds }) => {
-      if (
-        game.cells[cellIndex] !== null ||
-        playerId === game.lastMovePlayerId
-      ) {
-        throw Dusk.invalidAction()
-      }
-
-      game.cells[cellIndex] = playerId
-      game.lastMovePlayerId = playerId
-      game.winCombo = findWinningCombo(game.cells)
-
-      if (game.winCombo) {
-        const [player1, player2] = allPlayerIds
-
-        Dusk.gameOver({
-          players: {
-            [player1]: game.lastMovePlayerId === player1 ? "WON" : "LOST",
-            [player2]: game.lastMovePlayerId === player2 ? "WON" : "LOST",
-          },
-        })
-      }
-
-      game.freeCells = game.cells.findIndex((cell) => cell === null) !== -1
-
-      if (!game.freeCells) {
-        Dusk.gameOver({
-          players: {
-            [game.playerIds[0]]: "LOST",
-            [game.playerIds[1]]: "LOST",
-          },
-        })
-      }
+    startDrag: (_, { game }) => {
+      // game.world.dynamicBodies[0].velocity.x *= 0.1;
+      // game.world.dynamicBodies[0].velocity.y *= 0.1;
+    },
+    release: (force, { game, playerId }) => {
+      game.world.dynamicBodies.find(
+        (b) => b.id === game.playerBalls[playerId],
+      ).velocity = force;
     },
   },
-})
+  updatesPerSecond: 30,
+  update: ({ game }) => {
+    physics.worldStep(30, game.world);
+
+    console.log(game.world.dynamicBodies);
+  },
+});
